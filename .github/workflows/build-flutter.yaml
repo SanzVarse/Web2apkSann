@@ -1,3 +1,39 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      jobId:
+        description: "Build Job ID"
+        required: true
+        type: string
+
+      userId:
+        description: "User ID"
+        required: true
+        type: string
+
+      payload:
+        description: "Build payload JSON"
+        required: true
+        type: string
+
+jobs:
+  build:
+    name: Flutter APK Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      actions: write
+
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+    steps:
+
+      # ==========================================
       # 1. SETUP NODE
       # ==========================================
       - name: Setup Node.js
@@ -51,7 +87,6 @@
             exit 1
           fi
 
-          echo "=== File Info ==="
           ls -lh project.zip
           file project.zip
 
@@ -71,9 +106,6 @@
           mkdir -p project_raw
 
           unzip -q project.zip -d project_raw
-
-          echo "=== Initial project structure ==="
-          find project_raw -maxdepth 2 -type f | head -100
 
           SUB_DIR_COUNT=$(find project_raw \
             -mindepth 1 \
@@ -96,15 +128,10 @@
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "================================"
-          echo "Project directory:"
-          echo "$PROJECT_DIR"
-          echo "================================"
+          echo "Project directory: $PROJECT_DIR"
 
           if [ ! -f "$PROJECT_DIR/pubspec.yaml" ]; then
             echo "❌ pubspec.yaml tidak ditemukan!"
-            echo ""
-            echo "Isi project:"
             find "$PROJECT_DIR" -maxdepth 2 -type f | head -100
             exit 1
           fi
@@ -132,13 +159,25 @@
           cache: true
 
       # ==========================================
-      # 7. FLUTTER DOCTOR
+      # 7. CONFIGURE GRADLE MEMORY
       # ==========================================
-      - name: Flutter Doctor
+      - name: Configure Gradle Memory
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          flutter --version
-          flutter doctor -v
+          echo "=== Configuring Gradle memory ==="
+
+          touch android/gradle.properties
+
+          cat >> android/gradle.properties <<'EOF'
+
+          org.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=768m -XX:+HeapDumpOnOutOfMemoryError
+          org.gradle.daemon=false
+          org.gradle.parallel=true
+          org.gradle.caching=true
+          EOF
+
+          echo "=== Gradle properties ==="
+          cat android/gradle.properties
 
       # ==========================================
       # 8. PUB GET
@@ -150,16 +189,7 @@
           flutter pub get
 
       # ==========================================
-      # 9. ANALYZE
-      # ==========================================
-      - name: Flutter Analyze
-        working-directory: ${{ env.PROJECT_DIR }}
-        run: |
-          echo "=== flutter analyze ==="
-          flutter analyze --no-fatal-infos || true
-
-      # ==========================================
-      # 10. BUILD APK
+      # 9. BUILD APK
       # ==========================================
       - name: Build Release APK
         working-directory: ${{ env.PROJECT_DIR }}
@@ -168,10 +198,10 @@
           echo "BUILDING RELEASE APK"
           echo "================================"
 
-          flutter build apk --release
+          flutter build apk --release --no-pub
 
       # ==========================================
-      # 11. FIND APK
+      # 10. FIND APK
       # ==========================================
       - name: Find APK
         run: |
@@ -194,28 +224,24 @@
 
           echo "APK_PATH=$APK_FOUND" >> "$GITHUB_ENV"
 
-          echo "================================"
           echo "APK FOUND:"
           echo "$APK_FOUND"
-          echo "================================"
 
           ls -lh "$APK_FOUND"
 
       # ==========================================
-      # 12. COPY APK TO STANDARD LOCATION
+      # 11. PREPARE APK
       # ==========================================
       - name: Prepare APK
         run: |
           mkdir -p artifacts
 
-          cp "$APK_PATH" \
-            "artifacts/app-release.apk"
+          cp "$APK_PATH" artifacts/app-release.apk
 
-          echo "=== Artifact ==="
           ls -lh artifacts/app-release.apk
 
       # ==========================================
-      # 13. UPLOAD ARTIFACT
+      # 12. UPLOAD ARTIFACT
       # ==========================================
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -226,7 +252,7 @@
           if-no-files-found: error
 
       # ==========================================
-      # 14. BUILD SUCCESS
+      # 13. SUCCESS
       # ==========================================
       - name: Build summary
         run: |
